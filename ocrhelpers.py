@@ -227,7 +227,7 @@ class LineTrainer(object):
         ax1, ax2, ax3 = fig.get_axes()
         inputs, targets, ilens, tlens, outputs = self.last_batch
         ax1.set_title(f"{self.epoch} {self.count}")
-        ax1.imshow(inputs[0].detach().cpu().numpy()[:,:,0])
+        ax1.imshow(inputs[0].detach().cpu().numpy()[0,:,:])
         self.report_outputs(ax2, outputs)
         losses = ndi.gaussian_filter(self.losses, 10.0)
         losses = losses[::10]
@@ -369,7 +369,7 @@ class ImageTrainer(object):
         ax1, ax2, ax3 = fig.get_axes()
         inputs, targets, outputs = self.last_batch
         ax1.set_title(f"{self.epoch} {self.count}")
-        ax1.imshow(inputs[0].detach().cpu().numpy()[:,:,0])
+        ax1.imshow(inputs[0].detach().cpu().numpy()[0,:,:])
         self.report_outputs(ax2, outputs)
         losses = ndi.gaussian_filter(self.losses, 10.0)
         losses = losses[::10]

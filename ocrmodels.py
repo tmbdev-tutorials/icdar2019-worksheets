@@ -41,8 +41,8 @@ def load_latest(model, pattern=None, error=False):
         return extract_save_info(saves[-1])
 
 ################################################################
-### layer combinations
-################################################################
+# ## layer combinations
+# ###############################################################
 
 def conv2d(d, r=3, stride=1, repeat=1):
     """Generate a conv layer with batchnorm and optional maxpool."""
@@ -104,21 +104,8 @@ def project_and_conv1d(d, noutput, r=5):
     ]
 
 ################################################################
-### new layer types
-################################################################
-
-class ProjectProbabilities(nn.Module):
-    """Given a 2D convolutional output giving posterior pixel probabilities,
-    reduce the output to a 1D posterior distribution.
-    """
-    def __init__(self):
-        super().__init__()
-    def forward(self, x):
-        l = x.softmax(1) # BDHW
-        r1 = l[:,1:,:,:].max(2)[0] # BDW
-        r0 = (1-r1.max(1)[0])[:,None,:] # BW
-        z = torch.cat([r0, r1], dim=1) # BDW
-        return (z+1e-6).log()
+# ## new layer types
+# ###############################################################
 
 class UnetLayer(nn.Module):
     """Resolution pyramid layer using convolutions and upscaling.
@@ -211,18 +198,18 @@ def ResnetBlock(d, r=3, identity=None, post=None):
     )
 
 ################################################################
-### entire OCR models
-################################################################
+# ## entire OCR models
+# ###############################################################
 
 def make_lstm_ctc(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2mp(50, 3, (2, 1)),
         *conv2mp(100, 3, (2, 1)),
         *conv2mp(150, 3, 2),
         *project_and_lstm(100, noutput)
     )
-    flex.shape_inference(model, (1, 128, 512, 1))
+    flex.shape_inference(model, (1, 1, 128, 512))
     return model
 
 def resnet_blocks(n, d, r=3):
@@ -230,7 +217,7 @@ def resnet_blocks(n, d, r=3):
 
 def make_lstm_resnet(noutput=noutput, blocksize=5):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2mp(64, 3, (2, 1)),
         *resnet_blocks(blocksize, 64),
         *conv2mp(128, 3, (2, 1)),
@@ -240,13 +227,13 @@ def make_lstm_resnet(noutput=noutput, blocksize=5):
         *conv2d(256, 3),
         *project_and_lstm(100, noutput)
     )
-    flex.shape_inference(model, (1, 128, 512, 1))
+    flex.shape_inference(model, (1, 1, 128, 512))
     return model
 
 
 def make_ocr_resnet(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2mp(64, 3, 2),
         *resnet_blocks(5, 64),
         *conv2mp(128, 3, (2, 1)),
@@ -258,12 +245,12 @@ def make_ocr_resnet(noutput=noutput):
         *conv2d(512, 3),
         *project_and_conv1d(512, noutput)
     )
-    flex.shape_inference(model, (1, 128, 512, 1))
+    flex.shape_inference(model, (1, 1, 128, 512))
     return model
 
 def make_lstm_normalized(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1),
+        layers.Input("BDHW", range=(0, 1),
                      sizes=[None, 1, 80, None]),
         *conv2mp(50, 3, (2, 1)),
         *conv2mp(100, 3, (2, 1)),
@@ -274,24 +261,24 @@ def make_lstm_normalized(noutput=noutput):
         layers.Reorder("LBD", "BDL"),
         flex.Conv1d(noutput, 1),
         layers.Reorder("BDL", "BLD"))
-    flex.shape_inference(model, (1, 80, 200, 1))
+    flex.shape_inference(model, (1, 1, 80, 200))
     return model
 
 def make_conv_only(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", "BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2mp(100, 3, 2, repeat=2),
         *conv2mp(200, 3, 2, repeat=2),
         *conv2mp(300, 3, 2, repeat=2),
         *conv2d(400, 3, repeat=2),
         *project_and_conv1d(800, noutput)
     )
-    flex.shape_inference(model, (1, 48, 300, 1))
+    flex.shape_inference(model, (1, 1, 48, 300))
     return model
 
 def make_lstm2_ctc_words(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", "BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2mp(100, 3, 2, repeat=2),
         *conv2mp(200, 3, 2, repeat=2),
         *conv2mp(300, 3, 2, repeat=2),
@@ -299,12 +286,12 @@ def make_lstm2_ctc_words(noutput=noutput):
         flex.Lstm2(400),
         *project_and_conv1d(800, noutput)
     )
-    flex.shape_inference(model, (1, 48, 300, 1))
+    flex.shape_inference(model, (1, 1, 48, 300))
     return model
 
 def make_lstm_transpose(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2x(50, 3),
         *conv2x(100, 3),
         *conv2x(150, 3),
@@ -318,12 +305,12 @@ def make_lstm_transpose(noutput=noutput):
         flex.Conv1d(noutput, 1),
         layers.Reorder("BDL", "BLD")
     )
-    flex.shape_inference(model, (1, 128, 512, 1))
+    flex.shape_inference(model, (1, 1, 128, 512))
     return model
 
 def make_lstm_keep(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         KeepSize(
             mode="nearest",
             dims=[3],
@@ -343,12 +330,12 @@ def make_lstm_keep(noutput=noutput):
         flex.Conv1d(noutput, 1),
         layers.Reorder("BDL", "BLD")
     )
-    flex.shape_inference(model, (1, 128, 512, 1))
+    flex.shape_inference(model, (1, 1, 128, 512))
     return model
 
 def make_lstm_unet(noutput=noutput):
     model = nn.Sequential(
-        layers.Input("BHWD", reorder="BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
         *conv2d(64, 3, repeat=3),
         UnetLayer(64, sub=[
             *conv2d(128, 3, repeat=3),
@@ -362,7 +349,7 @@ def make_lstm_unet(noutput=noutput):
         *conv2d(128, 3, repeat=2),
         *project_and_lstm(100, noutput)
     )
-    flex.shape_inference(model, (1, 256, 256, 1))
+    flex.shape_inference(model, (1, 1, 128, 256))
     return model
 
 def unet_conv(d=64):
@@ -379,52 +366,4 @@ def unet_conv(d=64):
         ])
     ]
 
-
-def make_conv_prob_project(noutput=noutput):
-    model = nn.Sequential(
-        layers.Input("BHWD", "BDHW", range=(0, 1), sizes=[None, 1, None, None]),
-        *unet_conv(),
-        *conv2d(400, 3),
-        flex.Conv2d(noutput, 1),
-        ProjectProbabilities(),
-        layers.Reorder("BDL", "BLD"))
-    flex.shape_inference(model, (1, 128, 512, 1))
-    return model
-
-def make_conv_prob2d(noutput=noutput):
-    model = nn.Sequential(
-        layers.Input("BHWD", "BDHW", range=(0, 1), sizes=[None, 1, None, None]),
-        *conv2mp(64, 3, 2, repeat=2),
-        *conv2mp(128, 3, 2, repeat=2),
-        UnetLayer(256, sub=[
-            *conv2d(256, 3, repeat=2),
-            UnetLayer(512, sub=[
-                *conv2d(512, 3, repeat=2),
-            ])
-        ]),
-        *conv2d(400, 3),
-        flex.Conv2d(noutput, 1))
-    flex.shape_inference(model, (1, 128, 512, 1))
-    return model
-
-def make_lstm2_prob2d(noutput=noutput):
-    model = nn.Sequential(
-        layers.Input("BHWD", "BDHW", range=(0, 1), sizes=[None, 1, None, None]),
-        *conv2mp(64, 3, 2, repeat=2),
-        *conv2mp(128, 3, 2, repeat=2),
-        flex.Lstm2(400),
-        *conv2d(400, 3),
-        flex.Conv2d(noutput, 1))
-    flex.shape_inference(model, (1, 128, 512, 1))
-    return model
-
-def make_conv_gprob2d(noutput=noutput):
-    import numpy as np
-    model = nn.Sequential(
-        layers.Input("BHWD", "BDHW", range=(0, 1), sizes=[None, 1, None, None]),
-        *[l for d in [64, 128, 256, 512] for l in conv2mp(int(d), repeat=2)],
-        flex.Conv2d(noutput, 1),
-    )
-    flex.shape_inference(model, (1, 128, 512, 1))
-    return model
 
