@@ -115,10 +115,15 @@ class LineTrainer(object):
         self.batch_size = -1
         self.charset = None
         self.loss_scale = 1.0
-        self.maxcount = int(os.environ.get("maxcount", 999999999))
-        self.smoketest = int(os.environ.get("smoketest", 0))
+        if os.path.exists("__MAXCOUNT__"):
+            with open("__MAXCOUNT__") as stream:
+                self.maxcount = int(stream.read().strip())
+            print(f"__MAXCOUNT__ {self.maxcount}", file=sys.stderr)
+        else:
+            self.maxcount = int(os.environ.get("maxcount", 999999999))
+            if self.maxcount != 999999999:
+                print(f"maxcount={self.maxcount}", file=sys.stderr)
         self.savedir = os.environ.get("savedir", "./models")
-        # smoketests with short epochs/training
     def set_lr(self, lr, momentum=0.9):
         self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
     def info(self):
@@ -161,20 +166,12 @@ class LineTrainer(object):
             self.epoch = epoch
             self.count = 0
             for images, targets, ilens, tlens in loader:
-                if self.smoketest>0:
-                    print(f"count: {self.count}", file=sys.stderr)
-                else:
-                    self.report()
+                self.report()
                 loss = self.train_batch(images, targets, ilens, tlens)
                 self.losses.append(float(loss))
                 self.count += 1
                 if len(self.losses) >= self.maxcount:
                     break
-                if self.smoketest>0 and self.count>self.smoketest:
-                    print(f"smoketest finish", file=sys.stderr)
-                    os.system("touch _smoketest")
-                    time.sleep(1)
-                    raise Exception("smoketest finished")
             if len(self.losses) >= self.maxcount: break
             self.save_epoch(epoch)
             logging.info(f"epoch {epoch} loss {mean(self.losses[-100:])}")
@@ -182,6 +179,7 @@ class LineTrainer(object):
     def save_epoch(self, epoch):
         if not hasattr(self.model, "model_name"): return
         if not self.savedir or self.savedir=="": return
+        if not os.path.exists(self.savedir): return
         base = self.model.model_name
         ierr = int(1e6*mean(self.losses[-100])*self.loss_scale)
         ierr = min(999999999, ierr)
@@ -256,149 +254,10 @@ class LineTrainer(object):
                 errors += editdistance.distance(p, t)
                 total += len(t)
                 start += l
+                if total > self.maxcount: break
+            if total > self.maxcount: break
         return errors, total
 
-class ImageTrainer(object):
-    def __init__(self, model, *, lr=1e-4, every=3.0, device=device, loss=nn.NLLLoss()):
-        self.model = model
-        self.device = model_device(model) if device is None else device
-        self.loss2d = loss
-        self.every = every
-        self.losses = []
-        self.set_lr(lr)
-        self.clip_gradient = 1.0
-        self.max_batch_size = 64
-        self.batch_size = -1
-        self.charset = None
-        self.loss_scale = 1.0
-        self.maxcount = int(os.environ.get("maxcount", 999999999))
-        self.smoketest = int(os.environ.get("smoketest", 0))
-        self.savedir = os.environ.get("savedir", "./models")
-        # smoketests with short epochs/training
-    def set_lr(self, lr, momentum=0.9):
-        self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
-    def train_batch(self, inputs, targets):
-        self.model.train()
-        self.optimizer.zero_grad()
-        outputs = self.model.forward(inputs)
-        loss = self.compute_loss(inputs, outputs, targets)
-        loss.backward()
-        nn.utils.clip_grad_norm_(self.model.parameters(),
-                                 self.clip_gradient)
-        self.optimizer.step()
-        self.last_batch = (inputs, targets, outputs)
-        return loss.detach().item()
-    def compute_loss(self, inputs, outputs, targets):
-        assert outputs.ndimension()==4 and targets.ndimension()==3, (outputs.size(), targets.size())
-        assert outputs.size()[-2:] == targets.size()[-2:], (outputs.size(), targets.size())
-        probs = F.log_softmax(outputs, dim=1)
-        self.last_probs = F.softmax(outputs, dim=1)
-        loss = self.loss2d(probs, targets.to(probs.device))
-        return loss
-    def train(self, loader, epochs=1, total=None, cont=False):
-        logging.info(f"started training {self.model}")
-        if not cont:
-            self.losses = []
-        self.last_display = time.time()
-        for epoch in range(epochs):
-            self.epoch = epoch
-            self.count = 0
-            for inputs, targets in loader:
-                if self.smoketest>0:
-                    print(f"count: {self.count}", file=sys.stderr)
-                else:
-                    self.report()
-                loss = self.train_batch(inputs, targets)
-                self.losses.append(loss)
-                self.count += 1
-                if len(self.losses) >= self.maxcount:
-                    break
-                if self.smoketest>0 and self.count>self.smoketest:
-                    print(f"smoketest finish", file=sys.stderr)
-                    os.system("touch _smoketest")
-                    time.sleep(1)
-                    raise Exception("smoketest finished")
-            if len(self.losses) >= self.maxcount: break
-            self.save_epoch(epoch)
-            logging.info(f"epoch {epoch} loss {mean(self.losses[-100:])}")
-        self.report_end()
-    def save_epoch(self, epoch):
-        if not hasattr(self.model, "model_name"): return
-        if not self.savedir or self.savedir=="": return
-        base = self.model.model_name
-        ierr = int(1e6*mean(self.losses[-100])*self.loss_scale)
-        ierr = min(999999999, ierr)
-        loss = "%09d" % ierr
-        epoch = "%03d"%epoch
-        fname = f"{self.savedir}/{base}-{epoch}-{loss}.pth"
-        print(f"saving {fname}", file=sys.stderr)
-        torch.save(self.model.state_dict(), fname)       
-    def load(self, fname):
-        print(f"loading {fname}", file=sys.stderr)
-        self.model.load_state_dict(torch.load(fname))
-    def load_best(self):
-        assert hasattr(self.model, "model_name")
-        pattern = f"{self.savedir}/{model.model_name}-*.pth"
-        files = glob.glob(pattern)
-        assert len(files)>0, f"no {pattern} found"
-        def lossof(fname): 
-            return fname.split(".")[-2].split("-")[-1]
-        files = sort(files, key=lossof)
-        fname = files[-1]
-        self.load(fname)
-    def report0(self):
-        avgloss = mean(self.losses[-100:]) if len(self.losses)>0 else 0.0
-        print(f"{self.epoch:3d} {self.count:9d} {avgloss:10.4f}", " "*10, file=sys.stderr, end="\r", flush=True)
-    def report_end(self):
-        if int(os.environ.get("noreport", 0)): return
-        from IPython import display
-        display.clear_output(wait=True)
-    def report_outputs(self, ax, outputs):
-        b, d, h, w = self.last_probs.size()
-        ax.imshow(asnp(self.last_probs[0,0]))
-    def report(self):
-        if int(os.environ.get("noreport", 0)): return
-        if time.time()-self.last_display < self.every: return
-        self.last_display = time.time()
-        import matplotlib.pyplot as plt
-        from IPython import display
-        plt.close("all")
-        fig = plt.figure(figsize=(10, 8))
-        fig.clf()
-        for i in range(3): fig.add_subplot(3, 1, i+1)
-        ax1, ax2, ax3 = fig.get_axes()
-        inputs, targets, outputs = self.last_batch
-        ax1.set_title(f"{self.epoch} {self.count}")
-        ax1.imshow(inputs[0].detach().cpu().numpy()[0,:,:])
-        self.report_outputs(ax2, outputs)
-        losses = ndi.gaussian_filter(self.losses, 10.0)
-        losses = losses[::10]
-        losses = ndi.gaussian_filter(losses, 10.0)
-        ax3.plot(losses)
-        ax3.set_ylim((0.9*amin(losses), median(losses)*3))
-        display.clear_output(wait=True)
-        display.display(fig)
-    def probs_batch(self, inputs, ilens=None):
-        self.model.eval()
-        with torch.no_grad():
-            outputs = self.model.forward(inputs.to(self.device))
-        return outputs.detach().cpu().softmax(2)
-    def predict_batch(self, inputs, ilens=None, **kw):
-        probs = self.probs_batch(inputs, ilens)
-        result = [ctc_decode(p, **kw) for p in probs]
-        return result
-    def errors(self, loader):
-        total = 0
-        errors = 0
-        for inputs, targets, ilens, tlens in loader:
-            predictions = self.predict_batch(inputs)
-            start = 0
-            for p, l in zip(predictions, tlens):
-                t = targets[start:start+l].tolist()
-                errors += editdistance.distance(p, t)
-                total += len(t)
-                start += l
-        return errors, total
 
 import matplotlib.pyplot as plt
 plt.rc("image", cmap="gray")
