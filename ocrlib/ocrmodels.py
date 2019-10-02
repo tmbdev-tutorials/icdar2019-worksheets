@@ -209,4 +209,44 @@ def make_lstm2_ctc(noutput=noutput):
     flex.shape_inference(model, (1, 1, 48, 300))
     return model
 
+def make_seg_conv(noutput=3):
+    model = nn.Sequential(
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.KeepSize(sub=nn.Sequential(
+                *combos.conv2d_block(50, 3, mp=2, repeat=3),
+                *combos.conv2d_block(100, 3, mp=2, repeat=3),
+                *combos.conv2d_block(200, 3, mp=2, repeat=3)
+            )
+        ),
+        *combos.conv2d_block(400, 5),
+        flex.Conv2d(noutput, 3)
+    )
+    flex.shape_inference(model, (1, 1, 256, 256))
+    return model
 
+def make_seg_lstm(noutput=3):
+    model = nn.Sequential(
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        layers.KeepSize(sub=nn.Sequential(
+                *combos.conv2d_block(50, 3, mp=2, repeat=3),
+                *combos.conv2d_block(100, 3, mp=2, repeat=3),
+                *combos.conv2d_block(200, 3, mp=2, repeat=3),
+                flex.BDHW_LSTM(200)
+            )
+        ),
+        *combos.conv2d_block(400, 5),
+        flex.Conv2d(noutput, 3)
+    )
+    flex.shape_inference(model, (1, 1, 256, 256))
+    return model
+
+def make_seg_unet(noutput=3):
+    model = nn.Sequential(
+        layers.Input("BDHW", range=(0, 1), sizes=[None, 1, None, None]),
+        *combos.conv2d_block(64, 3, repeat=3),
+        combos.make_unet([128, 256, 512]),
+        *combos.conv2d_block(64, 3, repeat=2),
+        flex.Conv2d(noutput, 5)
+    )
+    flex.shape_inference(model, (1, 1, 256, 256))
+    return model
