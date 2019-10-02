@@ -10,7 +10,6 @@ import torch.nn.functional as F
 import sys, os
 import time
 import IPython
-import logging
 
 import matplotlib.pyplot as plt
 plt.rc("image", cmap="gray")
@@ -137,74 +136,7 @@ def get_maxcount(dflt=999999999):
             print(f"maxcount={maxcount}", file=sys.stderr)
     return maxcount
 
-class LineTrainer(object):
-    def __init__(self, model, *, log_softmax=True, lr=1e-4, every=3.0, device=device, savedir=True):
-        self.model = model
-        self.device = model_device(model) if device is None else device
-        self.ctc_loss = nn.CTCLoss()
-        self.every = every
-        self.losses = []
-        self.set_lr(lr)
-        self.log_softmax = log_softmax
-        self.clip_gradient = 1.0
-        self.max_batch_size = 64
-        self.batch_size = -1
-        self.charset = None
-        self.loss_scale = 1.0
-        self.maxcount = get_maxcount()
-        self.savedir = os.environ.get("savedir", "./models") if savedir is True else savedir
-    def set_lr(self, lr, momentum=0.9):
-        self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
-    def info(self):
-        print(model, file=sys.stderr)
-        print(self.shape, "->", self.output_shape, file=sys.stderr)
-    def train_batch(self, inputs, targets, ilens, tlens):
-        self.model.train()
-        self.optimizer.zero_grad()
-        outputs = self.model.forward(inputs.to(self.device))
-        assert inputs.size(0) == outputs.size(0)
-        olens = torch.full((outputs.size(0),), outputs.size(-1)).long()
-        if hasattr(self, "compute_loss2"):
-            loss = self.compute_loss2(inputs, outputs, targets, ilens, olens, tlens)
-        else:
-            loss = self.compute_loss(outputs, targets, olens, tlens)
-        loss.backward()
-        nn.utils.clip_grad_norm_(self.model.parameters(),
-                                 self.clip_gradient)
-        self.optimizer.step()
-        self.last_batch = (inputs, targets, ilens, tlens, outputs)
-        return loss.detach().item()
-    def compute_loss(self, outputs, targets, olens, tlens):
-        b, l, d = outputs.size()
-        assert outputs.size(0) == tlens.size(0)
-        outputs = outputs.permute(1, 0, 2).cpu() # BLD -> LBD
-        if self.log_softmax: outputs = outputs.log_softmax(2)
-        lplens = torch.full((b,), l).long()
-        # CTCLoss requires LBD
-        loss = self.ctc_loss(outputs, targets, lplens, tlens)
-        return loss
-    def train(self, loader, epochs=1, start_epoch=0, total=None, cont=False, every=None):
-        self.every = every or self.every
-        if "force_epochs" in os.environ:
-            epochs = int(os.environ.get("force_epochs"))
-        logging.info(f"started training {self.model}")
-        if not cont:
-            self.losses = []
-        self.last_display = time.time()
-        for epoch in range(start_epoch, epochs):
-            self.epoch = epoch
-            self.count = 0
-            for images, targets, ilens, tlens in loader:
-                self.report()
-                loss = self.train_batch(images, targets, ilens, tlens)
-                self.losses.append(float(loss))
-                self.count += 1
-                if len(self.losses) >= self.maxcount:
-                    break
-            if len(self.losses) >= self.maxcount: break
-            self.save_epoch(epoch)
-            logging.info(f"epoch {epoch} loss {mean(self.losses[-100:])}")
-        self.report_end()
+class SavingForTrainer(object):
     def save_epoch(self, epoch):
         if not hasattr(self.model, "model_name"): return
         if not self.savedir or self.savedir=="": return
@@ -216,10 +148,12 @@ class LineTrainer(object):
         epoch = "%03d"%epoch
         fname = f"{self.savedir}/{base}-{epoch}-{loss}.pth"
         print(f"saving {fname}", file=sys.stderr)
-        torch.save(self.model.state_dict(), fname)       
+        torch.save(self.model.state_dict(), fname)   
+
     def load(self, fname):
         print(f"loading {fname}", file=sys.stderr)
         self.model.load_state_dict(torch.load(fname))
+
     def load_best(self):
         assert hasattr(self.model, "model_name")
         pattern = f"{self.savedir}/{model.model_name}-*.pth"
@@ -230,48 +164,129 @@ class LineTrainer(object):
         files = sort(files, key=lossof)
         fname = files[-1]
         self.load(fname)
-    def report0(self):
+
+class ReporterForTrainer(object):
+    def report_simple(self):
         avgloss = mean(self.losses[-100:]) if len(self.losses)>0 else 0.0
         print(f"{self.epoch:3d} {self.count:9d} {avgloss:10.4f}", " "*10, file=sys.stderr, end="\r", flush=True)
+
     def report_end(self):
         if int(os.environ.get("noreport", 0)): return
         from IPython import display
         display.clear_output(wait=True)
+
+    def report_inputs(self, ax, inputs):
+        ax.set_title(f"{self.epoch} {self.count}")
+        ax.imshow(inputs[0,0].detach().cpu(), cmap="gray")
+
+    def report_losses(self, ax, losses):
+        if len(losses) < 100: return
+        losses = ndi.gaussian_filter(losses, 10.0)
+        losses = losses[::10]
+        losses = ndi.gaussian_filter(losses, 10.0)
+        ax.plot(losses)
+        ax.set_ylim((0.9*amin(losses), median(losses)*3))
+
     def report_outputs(self, ax, outputs):
-        pred = outputs[0].detach().cpu().softmax(1).numpy()
-        for i in range(pred.shape[1]):
-            ax.plot(pred[:,i])
+        pass
+
     def report(self):
+        import matplotlib.pyplot as plt
+        from IPython import display
         if int(os.environ.get("noreport", 0)): return
         if time.time()-self.last_display < self.every: return
         self.last_display = time.time()
-        import matplotlib.pyplot as plt
-        from IPython import display
         plt.close("all")
         fig = plt.figure(figsize=(10, 8))
         fig.clf()
         for i in range(3): fig.add_subplot(3, 1, i+1)
         ax1, ax2, ax3 = fig.get_axes()
         inputs, targets, ilens, tlens, outputs = self.last_batch
-        ax1.set_title(f"{self.epoch} {self.count}")
-        ax1.imshow(inputs[0].detach().cpu().numpy()[0,:,:])
+        self.report_inputs(ax1, inputs)
         self.report_outputs(ax2, outputs)
-        losses = ndi.gaussian_filter(self.losses, 10.0)
-        losses = losses[::10]
-        losses = ndi.gaussian_filter(losses, 10.0)
-        ax3.plot(losses)
-        ax3.set_ylim((0.9*amin(losses), median(losses)*3))
+        self.report_losses(ax3, self.losses)
         display.clear_output(wait=True)
         display.display(fig)
-    def probs_batch(self, inputs, ilens=None):
-        self.model.eval()
-        with torch.no_grad():
-            outputs = self.model.forward(inputs.to(self.device))
-        return outputs.detach().cpu().softmax(2)
-    def predict_batch(self, inputs, ilens=None, **kw):
-        probs = self.probs_batch(inputs, ilens)
-        result = [ctc_decode(p, **kw) for p in probs]
-        return result
+
+
+class LineTrainer(ReporterForTrainer, SavingForTrainer):
+    def __init__(self, model, *, log_softmax=True, lr=1e-4, every=3.0, device=device, savedir=True):
+        super().__init__()
+        self.model = model
+        self.device = model_device(model) if device is None else device
+        self.lossfn = nn.CTCLoss()
+        self.every = every
+        self.losses = []
+        self.set_lr(lr)
+        self.log_softmax = log_softmax
+        self.clip_gradient = 1.0
+        self.max_batch_size = 64
+        self.batch_size = -1
+        self.charset = None
+        self.loss_scale = 1.0
+        self.maxcount = get_maxcount()
+        self.savedir = os.environ.get("savedir", "./models") if savedir is True else savedir
+        self.last_display = time.time()-999999
+    def set_lr(self, lr, momentum=0.9):
+        self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
+    def info(self):
+        print(model, file=sys.stderr)
+        print(self.shape, "->", self.output_shape, file=sys.stderr)
+ 
+    def train_batch(self, inputs, targets):
+        (inputs, ilens), (targets, tlens) = inputs, targets
+        self.model.train()
+        self.optimizer.zero_grad()
+        outputs = self.model.forward(inputs.to(self.device))
+        assert inputs.size(0) == outputs.size(0)
+        olens = torch.full((outputs.size(0),), outputs.size(-1)).long()
+        loss = self.compute_loss((outputs, olens), (targets, tlens))
+        loss.backward()
+        nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_gradient)
+        self.optimizer.step()
+        self.last_batch = (inputs, targets, ilens, tlens, outputs)
+        return loss.detach().item()
+
+    def compute_loss(self, outputs, targets):
+        (outputs, olens), (targets, tlens) = outputs, targets
+        b, l, d = outputs.size()
+        assert outputs.size(0) == tlens.size(0)
+        outputs = outputs.permute(1, 0, 2).cpu() # BLD -> LBD
+        if self.log_softmax: outputs = outputs.log_softmax(2)
+        lplens = torch.full((b,), l).long()
+        # CTCLoss requires LBD
+        loss = self.lossfn(outputs, targets, lplens, tlens)
+        return loss
+
+    def report_outputs(self, ax, outputs):
+        pred = outputs[0].detach().cpu().softmax(1).numpy()
+        for i in range(pred.shape[1]):
+            ax.plot(pred[:,i])
+
+    ### iterating over loaders
+
+    def train(self, loader, epochs=1, start_epoch=0, total=None, cont=False, every=None):
+        if every: self.every = every
+        for epoch in range(start_epoch, epochs):
+            self.epoch = epoch
+            self.count = 0
+            for sample in loader:
+                if len(sample) == 4:
+                    images, targets, ilens, tlens = sample
+                    images = (images, ilens)
+                    targets = (targets, tlens)
+                else:
+                    images, targets = sample
+                loss = self.train_batch(images, targets)
+                self.report()
+                self.losses.append(float(loss))
+                self.count += 1
+                if len(self.losses) >= self.maxcount:
+                    break
+            if len(self.losses) >= self.maxcount: break
+            self.save_epoch(epoch)
+        self.report_end()
+
     def errors(self, loader):
         total = 0
         errors = 0
@@ -287,8 +302,22 @@ class LineTrainer(object):
             if total > self.maxcount: break
         return errors, total
 
-class SegTrainer(object):
+    ### inference
+
+    def probs_batch(self, inputs, ilens=None):
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model.forward(inputs.to(self.device))
+        return outputs.detach().cpu().softmax(2)
+
+    def predict_batch(self, inputs, ilens=None, **kw):
+        probs = self.probs_batch(inputs, ilens)
+        result = [ctc_decode(p, **kw) for p in probs]
+        return result
+
+class SegTrainer(ReporterForTrainer):
     def __init__(self, model, *, lr=1e-4, every=3.0, margin=16, device=device, savedir=True):
+        super().__init__()
         self.model = model
         self.device = model_device(model) if device is None else device
         self.lossfn = nn.CrossEntropyLoss() # nn.NLLLoss()
@@ -353,7 +382,6 @@ class SegTrainer(object):
         self.every = every
         if "force_epochs" in os.environ:
             epochs = int(os.environ.get("force_epochs"))
-        logging.info(f"started training {self.model}")
         if not cont:
             self.losses = []
         self.last_display = time.time()
@@ -378,7 +406,6 @@ class SegTrainer(object):
                     raise Exception("smoketest finished")
             if len(self.losses) >= self.maxcount: break
             self.save_epoch(epoch)
-            logging.info(f"epoch {epoch} loss {mean(self.losses[-100:])}")
         self.report_end()
     def save_epoch(self, epoch):
         if not hasattr(self.model, "model_name"): return
