@@ -255,11 +255,11 @@ class BaseTrainer(ReporterForTrainer, SavingForTrainer):
         self.probfn = probfn
         self.every = every
         self.losses = []
+        self.last_lr = None
         self.set_lr(lr)
         self.clip_gradient = maxgrad
         self.charset = None
         self.maxcount = get_maxcount()
-        self.last_lr = None
 
     def set_lr(self, lr, momentum=0.9):
        if lr!=self.last_lr:
@@ -290,9 +290,13 @@ class BaseTrainer(ReporterForTrainer, SavingForTrainer):
             outputs = self.model.forward(inputs.to(self.device))
         return probfn(outputs.detach().cpu())
 
-    def train(self, loader, epochs=1, start_epoch=0, total=None, cont=False, every=None):
+    def train(self, loader, epochs=1, learning_rates=None, total=None, cont=False, every=None):
         if every: self.every = every
-        for epoch in range(start_epoch, epochs):
+        if learning_rates is None:
+            learning_rates = [self.last_lr] * epochs
+        
+        for epoch, lr in enumerate(learning_rates):
+            self.set_lr(lr)
             self.epoch = epoch
             self.count = 0
             for sample in loader:
@@ -303,7 +307,8 @@ class BaseTrainer(ReporterForTrainer, SavingForTrainer):
                 self.count += 1
                 if len(self.losses) >= self.maxcount:
                     break
-            if len(self.losses) >= self.maxcount: break
+            if len(self.losses) >= self.maxcount:
+                break
             self.save_epoch(epoch)
         self.report_end()
 
