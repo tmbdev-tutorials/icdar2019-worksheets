@@ -220,9 +220,14 @@ class ReporterForTrainer(object):
         plt.close("all")
         fig = plt.figure(figsize=(10, 8))
         fig.clf()
-        for i in range(3): fig.add_subplot(3, 1, i+1)
-        ax1, ax2, ax3 = fig.get_axes()
         inputs, targets, outputs = self.last_batch
+        if hasattr(self, "report_extra"):
+            for i in range(4): fig.add_subplot(2, 2, i+1)
+            ax1, ax2, ax3, ax4 = fig.get_axes()
+            self.report_extra(ax4, inputs, targets, outputs)
+        else:
+            for i in range(3): fig.add_subplot(3, 1, i+1)
+            ax1, ax2, ax3 = fig.get_axes()
         self.report_inputs(ax1, inputs)
         self.report_outputs(ax2, outputs)
         self.report_losses(ax3, self.losses)
@@ -370,8 +375,17 @@ class SegTrainer(BaseTrainer):
         """Display the RGB output posterior probabilities."""
         from IPython import display
         p = outputs.detach().cpu().softmax(1)
+        b, d, h, w = outputs.size()
         result = asnp(p)[0].transpose(1, 2, 0)
         result -= amin(result)
         result /= amax(result)
         ax.imshow(result)
+        ax.plot([w//2, w//2], [0, h], color="white", alpha=0.5)
 
+    def report_extra(self, ax, inputs, targets, outputs):
+        from IPython import display
+        p = outputs.detach().cpu().softmax(1)
+        b, d, h, w = p.size()
+        colors = "r g b".split()
+        for i in range(d):
+            ax.plot(p[0, i, :, w//2], color=colors[i])
