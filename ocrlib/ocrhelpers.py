@@ -343,51 +343,11 @@ class LineTrainer(BaseTrainer):
         result = [ctc_decode(p, **kw) for p in probs]
         return result
 
-class SegTrainer(ReporterForTrainer, SavingForTrainer):
-    def __init__(self, model, *, lr=1e-4, every=3.0, margin=16, device=device, savedir=True):
-        super().__init__()
-        self.model = model
-        self.device = model_device(model) if device is None else device
-        self.lossfn = nn.CrossEntropyLoss() # nn.NLLLoss()
-        self.every = every
-        self.losses = []
-        self.clip_gradient = 1.0
-        self.charset = None
-        self.loss_scale = 1.0
-        self.margin = 8
-        self.maxcount = int(os.environ.get("maxcount", 999999999))
-        self.last_lr = -1
-        self.lr = lr
-    def set_lr(self, lr, momentum=0.9):
-        assert isinstance(lr, float)
-        if lr == self.last_lr: return
-        print(f"setting learning rate to {lr}", file=sys.stderr)
-        self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
-        self.last_lr = lr
-    def set_lr_for_epoch(self, epoch):
-        if isinstance(self.lr, float):
-            self.set_lr(self.lr)
-        elif callable(self.lr):
-            self.set_lr(self.lr(epoch))
-        elif isinstance(self.lr, list):
-            self.set_lr(self.lr[min(epoch, len(self.lr)-1)])
-        else:
-            raise ValueError(f"unknown lr type {self.lr}")
-    def info(self):
-        print(model, file=sys.stderr)
-        print(self.shape, "->", self.output_shape, file=sys.stderr)
-    def train_batch(self, inputs, targets):
-        self.model.train()
-        self.optimizer.zero_grad()
-        outputs = self.model.forward(inputs.to(self.device))
-        assert inputs.size(0) == outputs.size(0)
-        olens = torch.full((outputs.size(0),), outputs.size(-1)).long()
-        loss = self.compute_loss(outputs, targets)
-        loss.backward()
-        nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_gradient)
-        self.optimizer.step()
-        self.last_batch = (inputs, targets, outputs)
-        return loss.detach().item()
+class SegTrainer(BaseTrainer):
+    def __init__(self, model, margin=16, **kw):
+        super().__init__(model, lossfn=nn.CrossEntropyLoss(), **kw)
+        self.margin = margin
+
     def compute_loss(self, outputs, targets):
         b, d, h, w = outputs.shape
         b1, h1, w1 = targets.shape
@@ -400,27 +360,7 @@ class SegTrainer(ReporterForTrainer, SavingForTrainer):
             targets = targets[:,m:-m,m:-m]
         loss = self.lossfn(outputs, targets.to(outputs.device))
         return loss
-    def train(self, loader, epochs=1, start_epoch=0, total=None, cont=False, every=15):
-        self.every = every
-        if "force_epochs" in os.environ:
-            epochs = int(os.environ.get("force_epochs"))
-        if not cont:
-            self.losses = []
-        self.last_display = time.time()
-        for epoch in range(start_epoch, epochs):
-            self.set_lr_for_epoch(epoch)
-            self.epoch = epoch
-            self.count = 0
-            for images, targets in loader:
-                self.report()
-                loss = self.train_batch(images, targets)
-                self.losses.append(float(loss))
-                self.count += 1
-                if len(self.losses) >= self.maxcount:
-                    break
-            if len(self.losses) >= self.maxcount: break
-            self.save_epoch(epoch)
-        self.report_end()
+
     def report_outputs(self, ax, outputs):
         from IPython import display
         p = outputs.detach().cpu().softmax(1)
@@ -428,14 +368,4 @@ class SegTrainer(ReporterForTrainer, SavingForTrainer):
         result -= amin(result)
         result /= amax(result)
         ax.imshow(result)
-    def probs_batch(self, inputs):
-        self.model.eval()
-        with torch.no_grad():
-            outputs = self.model.forward(inputs.to(self.device))
-        return outputs.detach().cpu().softmax(2)
-    def predict_batch(self, inputs, **kw):
-        probs = self.probs_batch(inputs)
-        result = [ctc_decode(p, **kw) for p in probs]
-        return result
-
 
