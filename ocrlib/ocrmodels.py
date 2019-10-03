@@ -44,6 +44,8 @@ def load_latest(model, pattern=None, error=False):
 # ## layer combinations
 # ###############################################################
 
+#ocr_output = "BLD"
+ocr_output = "BDL"
 
 def project_and_lstm(d, noutput, num_layers=1):
     return [
@@ -52,7 +54,7 @@ def project_and_lstm(d, noutput, num_layers=1):
         flex.LSTM(d, bidirectional=True, num_layers=num_layers),
         layers.Reorder("LBD", "BDL"),
         flex.Conv1d(noutput, 1),
-        layers.Reorder("BDL", "BLD")
+        layers.Reorder("BDL", ocr_output)
     ]
 
 def project_and_conv1d(d, noutput, r=5):
@@ -62,7 +64,7 @@ def project_and_conv1d(d, noutput, r=5):
         flex.BatchNorm1d(),
         nn.ReLU(),
         flex.Conv1d(noutput, 1),
-        layers.Reorder("BDL", "BLD")
+        layers.Reorder("BDL", ocr_output)
     ]
 
 
@@ -122,7 +124,7 @@ def make_lstm_normalized(noutput=noutput):
         flex.LSTM(100, bidirectional=True),
         layers.Reorder("LBD", "BDL"),
         flex.Conv1d(noutput, 1),
-        layers.Reorder("BDL", "BLD"))
+        layers.Reorder("BDL", ocr_output))
     flex.shape_inference(model, (1, 1, 80, 200))
     return model
 
@@ -140,7 +142,7 @@ def make_lstm_transpose(noutput=noutput):
         flex.LSTM(100, bidirectional=True),
         layers.Reorder("LBD", "BDL"),
         flex.Conv1d(noutput, 1),
-        layers.Reorder("BDL", "BLD")
+        layers.Reorder("BDL", ocr_output)
     )
     flex.shape_inference(model, (1, 1, 128, 512))
     return model
@@ -165,7 +167,7 @@ def make_lstm_keep(noutput=noutput):
         flex.LSTM(200, bidirectional=True),
         layers.Reorder("LBD", "BDL"),
         flex.Conv1d(noutput, 1),
-        layers.Reorder("BDL", "BLD")
+        layers.Reorder("BDL", ocr_output)
     )
     flex.shape_inference(model, (1, 1, 128, 512))
     return model
