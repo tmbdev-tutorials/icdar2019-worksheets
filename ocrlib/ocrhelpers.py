@@ -136,8 +136,8 @@ def get_maxcount(dflt=999999999):
     return maxcount
 
 class SavingForTrainer(object):
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    def __init__(self):
+        super().__init__()
         self.savedir = os.environ.get("savedir", "./models")
         self.loss_horizon = 100
         self.loss_scale = 1.0
@@ -172,8 +172,8 @@ class SavingForTrainer(object):
         self.load(fname)
 
 class ReporterForTrainer(object):
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    def __init__(self):
+        super().__init__()
         self.last_display = time.time()-999999
 
     def report_simple(self):
@@ -242,32 +242,36 @@ def CTCLossBDL(log_softmax=True):
         return ctc_loss(outputs.cpu(), targets.cpu(), olens.cpu(), tlens.cpu())
     return lossfn
 
-class LineTrainer(ReporterForTrainer, SavingForTrainer):
-    def __init__(self, model, *, lr=1e-4, every=3.0, device=None, savedir=True):
+def softmax1(x):
+    return x.softmax(1)
+
+class BaseTrainer(ReporterForTrainer, SavingForTrainer):
+    def __init__(self, model, *, lossfn=None, probfn=softmax1, lr=1e-4, every=3.0, device=None, savedir=True, maxgrad = 10.0, **kw):
         super().__init__()
         self.model = model
         self.device = None
         #self.lossfn = nn.CTCLoss()
-        self.lossfn = CTCLossBDL()
+        self.lossfn = lossfn
+        self.probfn = probfn
         self.every = every
         self.losses = []
         self.set_lr(lr)
-        self.clip_gradient = 1.0
-        self.max_batch_size = 64
-        self.batch_size = -1
+        self.clip_gradient = maxgrad
         self.charset = None
         self.maxcount = get_maxcount()
+        self.last_lr = None
 
     def set_lr(self, lr, momentum=0.9):
-        self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
- 
+       if lr!=self.last_lr:
+           self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum)
+           self.last_lr = lr 
+
     def train_batch(self, inputs, targets):
         self.model.train()
         self.optimizer.zero_grad()
         if self.device is not None:
             inputs = inputs.to(device)
         outputs = self.model.forward(inputs)
-        layers.check_order(outputs, "BDL")
         assert inputs.size(0) == outputs.size(0)
         loss = self.compute_loss(outputs, targets)
         loss.backward()
@@ -280,26 +284,11 @@ class LineTrainer(ReporterForTrainer, SavingForTrainer):
     def compute_loss(self, outputs, targets):
         return self.lossfn(outputs, targets)
 
-    def compute_loss0(self, outputs, targets):
-        layers.check_order(outputs, "BDL")
-        targets, tlens = targets
-        b, d, l = outputs.size()
-        assert outputs.size(0) == tlens.size(0)
-        assert d==53
-        outputs = layers.reorder(outputs, "BDL", "LBD")
-        outputs = outputs.log_softmax(2)
-        lplens = torch.full((b,), l).long()
-        # CTCLoss requires LBD
-        loss = self.lossfn(outputs.cpu(), targets, lplens, tlens)
-        return loss
-
-    def report_outputs(self, ax, outputs):
-        layers.check_order(outputs, "BDL")
-        pred = outputs[0].detach().cpu().softmax(0).numpy()
-        for i in range(pred.shape[0]):
-            ax.plot(pred[i])
-
-    ### iterating over loaders
+    def probs_batch(self, inputs):
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model.forward(inputs.to(self.device))
+        return probfn(outputs.detach().cpu())
 
     def train(self, loader, epochs=1, start_epoch=0, total=None, cont=False, every=None):
         if every: self.every = every
@@ -307,12 +296,7 @@ class LineTrainer(ReporterForTrainer, SavingForTrainer):
             self.epoch = epoch
             self.count = 0
             for sample in loader:
-                if len(sample) == 4:
-                    images, targets, ilens, tlens = sample
-                    images = (images, ilens)
-                    targets = (targets, tlens)
-                else:
-                    images, targets = sample
+                images, targets = sample
                 loss = self.train_batch(images, targets)
                 self.report()
                 self.losses.append(float(loss))
@@ -322,6 +306,17 @@ class LineTrainer(ReporterForTrainer, SavingForTrainer):
             if len(self.losses) >= self.maxcount: break
             self.save_epoch(epoch)
         self.report_end()
+
+
+class LineTrainer(BaseTrainer):
+    def __init__(self, model, **kw):
+        super().__init__(model, lossfn=CTCLossBDL(), **kw)
+
+    def report_outputs(self, ax, outputs):
+        layers.check_order(outputs, "BDL")
+        pred = outputs[0].detach().cpu().softmax(0).numpy()
+        for i in range(pred.shape[0]):
+            ax.plot(pred[i])
 
     def errors(self, loader):
         total = 0
@@ -338,14 +333,6 @@ class LineTrainer(ReporterForTrainer, SavingForTrainer):
             if total > self.maxcount: break
         return errors, total
 
-    ### inference
-
-    def probs_batch(self, inputs, ilens=None):
-        self.model.eval()
-        with torch.no_grad():
-            outputs = self.model.forward(inputs.to(self.device))
-        return outputs.detach().cpu().softmax(2)
-
     def predict_batch(self, inputs, ilens=None, **kw):
         probs = self.probs_batch(inputs, ilens)
         result = [ctc_decode(p, **kw) for p in probs]
@@ -360,8 +347,6 @@ class SegTrainer(ReporterForTrainer, SavingForTrainer):
         self.every = every
         self.losses = []
         self.clip_gradient = 1.0
-        self.max_batch_size = 64
-        self.batch_size = -1
         self.charset = None
         self.loss_scale = 1.0
         self.margin = 8
