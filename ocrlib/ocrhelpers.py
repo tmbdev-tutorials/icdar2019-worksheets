@@ -60,8 +60,11 @@ def method(cls):
     return decorator
 
 def ctc_decode(probs, sigma=1.0, threshold=0.7, kind=None, full=False):
-    """A simple decoder for CTC-trained OCR recognizers."""
-    probs = asnp(probs)
+    """A simple decoder for CTC-trained OCR recognizers.
+
+    :probs: d x l sequence classification output
+    """
+    probs = asnp(probs.T)
     assert (abs(probs.sum(1)-1) < 1e-4).all(), \
         "input not normalized; did you apply .softmax()?"
     probs = ndi.gaussian_filter(probs, (sigma, 0))
@@ -289,14 +292,13 @@ class BaseTrainer(ReporterForTrainer, SavingForTrainer):
         self.model.eval()
         with torch.no_grad():
             outputs = self.model.forward(inputs.to(self.device))
-        return probfn(outputs.detach().cpu())
+        return self.probfn(outputs.detach().cpu())
 
     def train(self, loader, epochs=1, learning_rates=None, total=None, cont=False, every=None):
         """Train over a dataloader for the given number of epochs."""
         if every: self.every = every
         if learning_rates is None:
             learning_rates = [self.last_lr] * epochs
-        
         for epoch, lr in enumerate(learning_rates):
             self.set_lr(lr)
             self.epoch = epoch
