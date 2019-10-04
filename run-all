@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -x
+set -e
+
+for fname in conv*.ipynb lstm*.ipynb seg*.ipynb; do
+    ./run-cmd jupyter nbconvert \
+        --to notebook \
+        --execute --ExecutePreprocessor.enabled=True \
+        --ExecutePreprocessor.timeout=99999999 \
+            $fname &&
+    mv -b $(basename .ipynb).nbconvert.ipynb $fname
+done

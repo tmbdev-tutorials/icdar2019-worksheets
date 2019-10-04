@@ -1,8 +1,0 @@
-#!/bin/bash
-
-set -x
-set -e
-
-for fname in conv*.ipynb lstm*.ipynb; do
-    jupyter nbconvert --to notebook --execute --ExecutePreprocessor.enabled=True --ExecutePreprocessor.timeout=99999999 $fname
-done
