@@ -344,9 +344,9 @@ class LineTrainer(BaseTrainer):
             if total > self.maxcount: break
         return errors, total
 
-    def predict_batch(self, inputs, ilens=None, **kw):
+    def predict_batch(self, inputs, **kw):
         """Predict and decode a batch."""
-        probs = self.probs_batch(inputs, ilens)
+        probs = self.probs_batch(inputs)
         result = [ctc_decode(p, **kw) for p in probs]
         return result
 
