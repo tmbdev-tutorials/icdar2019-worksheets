@@ -3,7 +3,6 @@ ICDAR 2019 Worksheets for Tutorial
 
 These are worksheets for the
 [ICDAR 2019 Tutorial on Deep Learning for Document Analysis](https://github.com/tmbdev/icdar2019-tutorial).
-
 They implement data generation and full training for text recognition (OCR) and document segmentation
 using a variety of common approaches, including convolution, U-net, LSTM, 2D LSTM, transpose convolutions,
 and upscaling.
