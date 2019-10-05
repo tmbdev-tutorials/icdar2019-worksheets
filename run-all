@@ -3,6 +3,12 @@
 set -x
 set -e
 
+finish() {
+    rm -f __MAXCOUNT__
+}
+trap finish EXIT
+
+echo 5000 > __MAXCOUNT__
 for fname in conv*.ipynb lstm*.ipynb seg*.ipynb; do
     ./run-cmd jupyter nbconvert \
         --to notebook \
