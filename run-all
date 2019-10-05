@@ -9,5 +9,5 @@ for fname in conv*.ipynb lstm*.ipynb seg*.ipynb; do
         --execute --ExecutePreprocessor.enabled=True \
         --ExecutePreprocessor.timeout=99999999 \
             $fname &&
-    mv -b $(basename .ipynb).nbconvert.ipynb $fname
+    mv -b $(basename $fname .ipynb).nbconvert.ipynb $fname
 done
